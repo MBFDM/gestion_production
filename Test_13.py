@@ -6,7 +6,7 @@ import os
 import subprocess
 import shutil
 import zipfile
-from docx import Document
+import docx
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from io import BytesIO
