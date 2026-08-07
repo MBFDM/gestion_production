@@ -341,15 +341,6 @@ def page_generateur():
         """, unsafe_allow_html=True)
         st.markdown("---")
         
-        # Métriques système
-        st.subheader("📊 Métriques système")
-        sys_info = st.session_state.metrics.get_system_info()
-        st.metric("💻 Système", sys_info["OS"])
-        st.metric("🐍 Python", sys_info["Python"])
-        st.metric("🔧 Architecture", sys_info["Architecture"])
-        
-        st.markdown("---")
-        
         # Métriques de l'application
         st.subheader("📈 Métriques application")
         metrics = st.session_state.metrics.get_metrics()
