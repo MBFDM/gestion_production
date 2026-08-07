@@ -89,8 +89,6 @@ def init_db():
     """Crée la table users et le compte admin par défaut si inexistant."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # Créer la table avec toutes les colonnes
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,27 +98,14 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # Vérifier et ajouter la colonne created_at si elle n'existe pas (migration)
-    try:
-        c.execute("SELECT created_at FROM users LIMIT 1")
-    except sqlite3.OperationalError:
-        # La colonne n'existe pas, on l'ajoute
-        c.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    
     # Vérifier si un admin existe déjà
     c.execute("SELECT * FROM users WHERE role = 'admin'")
     if not c.fetchone():
         # Créer admin par défaut : username = admin, password = admin123
         hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt()).decode()
-        try:
-            c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                      ("admin", hashed, "admin"))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            # Si l'admin existe déjà (cas rare), on ignore
-            pass
-    
+        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                  ("admin", hashed, "admin"))
+        conn.commit()
     conn.close()
 
 def get_db_connection():
@@ -171,13 +156,8 @@ def delete_user(username):
 def get_all_users():
     conn = get_db_connection()
     c = conn.cursor()
-    try:
-        c.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
-        users = c.fetchall()
-    except sqlite3.OperationalError:
-        # Si la colonne created_at n'existe pas encore
-        c.execute("SELECT id, username, role, NULL as created_at FROM users ORDER BY id")
-        users = c.fetchall()
+    c.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
+    users = c.fetchall()
     conn.close()
     return users
 
@@ -525,21 +505,13 @@ def page_admin():
     users = get_all_users()
     st.subheader("📋 Liste des utilisateurs")
     if users:
-        # S'assurer que tous les tuples ont 4 éléments
-        users_clean = []
-        for user in users:
-            if len(user) == 3:
-                users_clean.append((user[0], user[1], user[2], "N/A"))
-            else:
-                users_clean.append(user)
-        
-        user_df = pd.DataFrame(users_clean, columns=["ID", "Nom d'utilisateur", "Rôle", "Créé le"])
+        user_df = pd.DataFrame(users, columns=["ID", "Nom d'utilisateur", "Rôle", "Créé le"])
         st.dataframe(user_df, use_container_width=True)
 
         # Modification / suppression
         st.subheader("🔧 Modifier ou supprimer un utilisateur")
         # Filtrer pour ne pas afficher l'utilisateur actuel
-        user_list = [u[1] for u in users_clean if u[1] != st.session_state.username]
+        user_list = [u[1] for u in users if u[1] != st.session_state.username]
         if user_list:
             selected_username = st.selectbox("Choisir un utilisateur", user_list)
             if selected_username:
