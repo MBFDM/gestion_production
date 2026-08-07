@@ -15,9 +15,70 @@ import locale
 import sqlite3
 import bcrypt
 from functools import wraps
+import base64
+import time
+import psutil
+import platform
 
 # ------------------ Configuration initiale de la page ------------------
-st.set_page_config(page_title="Générateur de certificats - Authentification", layout="wide")
+st.set_page_config(
+    page_title="Générateur de certificats - Authentification", 
+    layout="wide",
+    page_icon="📄",
+    initial_sidebar_state="expanded"
+)
+
+# ------------------ Logo en base64 ------------------
+def get_logo_base64():
+    """Crée un logo SVG simple en base64"""
+    svg_logo = '''
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" width="200" height="80">
+        <rect x="0" y="0" width="200" height="80" rx="10" fill="#1e3a5f"/>
+        <text x="100" y="35" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">
+            📄 CertiGen
+        </text>
+        <text x="100" y="60" font-family="Arial, sans-serif" font-size="14" fill="#88b4d8" text-anchor="middle">
+            Générateur de certificats
+        </text>
+    </svg>
+    '''
+    return base64.b64encode(svg_logo.encode()).decode()
+
+# ------------------ Métriques de performance ------------------
+class PerformanceMetrics:
+    def __init__(self):
+        self.start_time = None
+        self.certificates_generated = 0
+        self.processing_times = []
+        
+    def start_processing(self):
+        self.start_time = time.time()
+        
+    def end_processing(self, count):
+        self.certificates_generated = count
+        elapsed = time.time() - self.start_time
+        self.processing_times.append(elapsed)
+        return elapsed
+    
+    def get_metrics(self):
+        return {
+            "Total générés": self.certificates_generated,
+            "Temps moyen": f"{sum(self.processing_times) / len(self.processing_times):.2f}s" if self.processing_times else "0s",
+            "Dernier temps": f"{self.processing_times[-1]:.2f}s" if self.processing_times else "0s",
+            "Total sessions": len(self.processing_times)
+        }
+    
+    def get_system_info(self):
+        return {
+            "CPU": f"{psutil.cpu_percent()}%",
+            "RAM": f"{psutil.virtual_memory().percent}%",
+            "OS": platform.system(),
+            "Python": platform.python_version()
+        }
+
+# Initialiser les métriques
+if 'metrics' not in st.session_state:
+    st.session_state.metrics = PerformanceMetrics()
 
 # ------------------ Gestion de la base de données SQLite ------------------
 DB_PATH = "users.db"
@@ -31,7 +92,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL
+            role TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     # Vérifier si un admin existe déjà
@@ -92,10 +154,18 @@ def delete_user(username):
 def get_all_users():
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT id, username, role FROM users ORDER BY id")
+    c.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
     users = c.fetchall()
     conn.close()
     return users
+
+def get_user_count():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
 
 # ------------------ Fonctions de l'application principale (inchangées) ------------------
 champs_cotes = [
@@ -258,6 +328,41 @@ def generer_tous_certificats(template_bytes, df, style_config):
 
 def page_generateur():
     st.title("📄 Générateur de certificats (Word + PDF) personnalisables")
+    
+    # Afficher le logo dans la sidebar
+    with st.sidebar:
+        logo_base64 = get_logo_base64()
+        st.markdown(f"""
+        <div style="text-align: center; padding: 10px;">
+            <img src="data:image/svg+xml;base64,{logo_base64}" style="width: 100%; max-width: 200px;">
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("---")
+        
+        # Métriques système
+        st.subheader("📊 Métriques système")
+        sys_info = st.session_state.metrics.get_system_info()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("CPU", sys_info["CPU"])
+            st.metric("OS", sys_info["OS"][:10])
+        with col2:
+            st.metric("RAM", sys_info["RAM"])
+            st.metric("Python", sys_info["Python"])
+        
+        st.markdown("---")
+        
+        # Métriques de l'application
+        st.subheader("📈 Métriques application")
+        metrics = st.session_state.metrics.get_metrics()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("📄 Certificats générés", metrics["Total générés"])
+            st.metric("⏱️ Dernier temps", metrics["Dernier temps"])
+        with col2:
+            st.metric("🔄 Sessions", metrics["Total sessions"])
+            st.metric("⚡ Temps moyen", metrics["Temps moyen"])
+    
     st.markdown("""
     Chargez un modèle Word (avec tableaux contenant les libellés) et un fichier Excel.
     - Les champs de la liste **côté** (`champs_cotes`) sont insérés **à droite** du libellé.
@@ -293,6 +398,17 @@ def page_generateur():
         try:
             df = pd.read_excel(excel_file, engine='openpyxl')
             st.success(f"Excel chargé : {df.shape[0]} ligne(s), {df.shape[1]} colonne(s)")
+            
+            # Afficher les stats du fichier
+            col_stats1, col_stats2, col_stats3 = st.columns(3)
+            with col_stats1:
+                st.metric("Lignes", df.shape[0])
+            with col_stats2:
+                st.metric("Colonnes", df.shape[1])
+            with col_stats3:
+                non_empty = df.count().sum()
+                st.metric("Cellules remplies", non_empty)
+            
             st.subheader("Aperçu du fichier Excel")
             st.dataframe(df, use_container_width=True)
 
@@ -303,11 +419,17 @@ def page_generateur():
             else:
                 st.success("✅ Tous les en-têtes requis sont présents.")
 
+            # Démarrer le chrono
+            st.session_state.metrics.start_processing()
+            
             with st.spinner(f"Génération de {df.shape[0]} certificat(s)..."):
                 template_bytes = modele_file.read()
                 certificats = generer_tous_certificats(template_bytes, df, style_config)
-
-            st.success(f"{len(certificats)} certificat(s) généré(s).")
+            
+            # Enregistrer les métriques
+            elapsed = st.session_state.metrics.end_processing(len(certificats))
+            
+            st.success(f"{len(certificats)} certificat(s) généré(s) en {elapsed:.2f} secondes.")
 
             if len(certificats) > 0:
                 first_docx = certificats[0][2]
@@ -352,6 +474,15 @@ def page_generateur():
 def page_admin():
     st.title("👑 Administration des utilisateurs")
     st.markdown("Gérer les comptes utilisateurs de l'application.")
+    
+    # Métriques admin
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("👥 Utilisateurs totaux", get_user_count())
+    with col2:
+        st.metric("📄 Certificats générés", st.session_state.metrics.certificates_generated)
+    with col3:
+        st.metric("🔄 Sessions", st.session_state.metrics.get_metrics()["Total sessions"])
 
     # Ajouter un utilisateur
     with st.expander("➕ Ajouter un utilisateur"):
@@ -371,7 +502,7 @@ def page_admin():
     users = get_all_users()
     st.subheader("📋 Liste des utilisateurs")
     if users:
-        user_df = pd.DataFrame(users, columns=["ID", "Nom d'utilisateur", "Rôle"])
+        user_df = pd.DataFrame(users, columns=["ID", "Nom d'utilisateur", "Rôle", "Créé le"])
         st.dataframe(user_df, use_container_width=True)
 
         # Modification / suppression
@@ -400,10 +531,29 @@ def page_admin():
 
 # ------------------ Gestion de l'authentification ------------------
 def login_page():
+    # Afficher le logo sur la page de login
+    logo_base64 = get_logo_base64()
+    st.markdown(f"""
+    <div style="text-align: center; padding: 20px;">
+        <img src="data:image/svg+xml;base64,{logo_base64}" style="width: 300px;">
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.title("🔐 Connexion")
+    
+    # Métriques sur la page de login
+    with st.expander("📊 Statistiques de l'application"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("👥 Utilisateurs", get_user_count())
+        with col2:
+            st.metric("📄 Certificats générés", st.session_state.metrics.certificates_generated if hasattr(st.session_state, 'metrics') else 0)
+        with col3:
+            st.metric("🔄 Sessions", st.session_state.metrics.get_metrics()["Total sessions"] if hasattr(st.session_state, 'metrics') else 0)
+    
     username = st.text_input("Nom d'utilisateur")
     password = st.text_input("Mot de passe", type="password")
-    if st.button("Se connecter"):
+    if st.button("Se connecter", use_container_width=True):
         role = verify_password(username, password)
         if role:
             st.session_state.logged_in = True
@@ -432,7 +582,7 @@ if not st.session_state.logged_in:
 else:
     # Barre latérale avec déconnexion
     st.sidebar.markdown(f"**Connecté :** {st.session_state.username} ({st.session_state.role})")
-    if st.sidebar.button("🚪 Déconnexion"):
+    if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
         logout()
 
     # Menu principal
